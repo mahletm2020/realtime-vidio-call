@@ -1,6 +1,6 @@
 <template>
   <div class="chat-container">
-  
+    <!-- Chat Log -->
     <div class="chat-log">
       <ul>
         <li
@@ -19,13 +19,11 @@
 
     <!-- Join Room and Message Forms -->
     <div class="chat-forms">
-      <!-- Join Room Form -->
       <div class="join-room">
         <input v-model="room" placeholder="Enter room name" />
         <button @click="joinRoom">Join Room</button>
       </div>
 
-      <!-- Chat Message Form -->
       <div class="message-form">
         <input
           v-model="message"
@@ -35,16 +33,6 @@
         <button @click="sendMessage">Send</button>
       </div>
     </div>
-
-    <!-- Participants List (Toggle) -->
-    <div v-if="showParticipants" class="participants-list">
-      <h3>Participants</h3>
-      <ul>
-        <li v-for="(participant, index) in participants" :key="index">
-          {{ participant }}
-        </li>
-      </ul>
-    </div>
   </div>
 </template>
 
@@ -53,36 +41,36 @@ import { ref, onMounted } from 'vue';
 
 const message = ref('');
 const chatLog = ref([]);
-const room = ref('');
-const showParticipants = ref(false);
-const participants = ref(['Alice', 'Bob', 'Charlie']); // Example participants list
+const room = ref(''); // Initialize room with an empty string
 const { $socket } = useNuxtApp();
 
-// Add a listener for the welcome message
+// Check if we're running in the client environment and load room from localStorage
+if (typeof window !== 'undefined') {
+  room.value = localStorage.getItem('room') || ''; // Load room from localStorage
+}
+
 onMounted(() => {
+  // Listeners for chat messages and participants
   $socket.on('welcome-message', (welcomeMsg) => {
     addMessage({ sender: 'Server', message: welcomeMsg });
   });
 
-  // Listen for incoming chat messages
   $socket.on('chat-message', (msg) => {
     addMessage(msg);
   });
 
-  // Listen for participant updates
-  $socket.on('update-participants', (list) => {
-    participants.value = list;
+  $socket.on('participant-joined', (user) => {
+    notify(`${user} joined the room`);
   });
 });
 
-// Function to send a message
 const sendMessage = () => {
-  if (message.value.trim() !== '') {
+  if (message.value.trim()) {
     const msgData = {
       sender: 'User',
       message: message.value,
       timestamp: new Date().toLocaleTimeString(),
-      room: room.value || null,
+      room: room.value,
     };
     $socket.emit('chat-message', msgData);
     addMessage(msgData);
@@ -90,23 +78,26 @@ const sendMessage = () => {
   }
 };
 
-// Function to join a specific chat room
 const joinRoom = () => {
-  if (room.value.trim() !== '') {
+  if (room.value.trim()) {
     $socket.emit('join-room', room.value);
+    // Save room to localStorage only on the client
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('room', room.value);
+    }
+    notify(`Joined room: ${room.value}`);
   }
 };
 
-// Function to add a message to the chat log
 const addMessage = (msg) => {
   chatLog.value.push(msg);
 };
 
-// Function to toggle the participants list
-const toggleParticipants = () => {
-  showParticipants.value = !showParticipants.value;
+const notify = (msg) => {
+  alert(msg); // Simple notification using alert
 };
 </script>
+
 
 <style scoped>
 .chat-container {

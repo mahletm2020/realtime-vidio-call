@@ -1,5 +1,3 @@
-// server.js
-
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -27,17 +25,17 @@ const io = new Server(server, {
   path: '/socket.io',
 });
 
+// Handle socket connection
 io.on('connection', (socket) => {
-  console.log('New client connected:', socket.id);
+  console.log('New client connected with ID:', socket.id);
 
-  // ====== Chat Functionality ======
-  // Send a welcome message
-  socket.emit('welcome-message', `You are connected as ID: ${socket.id}`);
+  // Send a notification to the newly connected client with their ID
+  socket.emit('notification', `You are connected as ID: ${socket.id}`);
 
-  // Listen for chat messages
+  // Listen for incoming chat messages
   socket.on('chat-message', (msg) => {
     if (!msg.room) {
-      // Broadcast to all clients if no room specified
+      // Broadcast to all clients if no room is specified
       socket.broadcast.emit('chat-message', msg);
     } else {
       // Send message to a specific room
@@ -51,37 +49,44 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} joined room: ${room}`);
   });
 
-  // ====== Video Call Functionality ======
-
-  // Handle initiating a call
-  socket.on('call-user', ({ targetUserId, callerId }) => {
-    console.log(`User ${callerId} is attempting to call ${targetUserId}`);
-    io.to(targetUserId).emit('incoming-call', { callerId });
+  // Notify others when the client disconnects
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+    socket.broadcast.emit('notification', `User ${socket.id} has disconnected`);
   });
 
-  // Handle accepting the call and notify the caller
+  // Call-related notifications and functionality are left untouched
   socket.on('accept-call', ({ callerId, receiverId }) => {
-    console.log(`User ${receiverId} accepted the call from ${callerId}`);
     io.to(callerId).emit('call-accepted', { receiverId });
+    io.emit('notification', `Call started between ${callerId} and ${receiverId}`);
+    console.log(`User ${receiverId} accepted the call from ${callerId}`);
+  });
+  
+// Notify when a user disconnects
+socket.on('disconnect', () => {
+  socket.broadcast.emit('notification', `User ${socket.id} has disconnected`);
+  console.log(`User ${socket.id} disconnected`);
+});
+
+  socket.on('accept-call', ({ callerId, receiverId }) => {
+    io.to(callerId).emit('call-accepted', { receiverId });
+    console.log(`User ${receiverId} accepted the call from ${callerId}`);
   });
 
-  // Handle rejecting the call and notify the caller
   socket.on('reject-call', ({ callerId }) => {
-    console.log(`Call rejected by receiver`);
+    console.log('Call rejected by receiver');
     io.to(callerId).emit('call-rejected');
   });
 
-  // Handle WebRTC signaling data (offer, answer, ICE candidates)
   socket.on('webrtc-signal', ({ targetUserId, signal }) => {
-    console.log(`Forwarding WebRTC signal to ${targetUserId}`);
-    io.to(targetUserId).emit('webrtc-signal', { signal, senderId: socket.id });
+    if (targetUserId) {
+      console.log(`Forwarding WebRTC signal to ${targetUserId}`);
+      io.to(targetUserId).emit('webrtc-signal', { signal, senderId: socket.id });
+    }
   });
-
-  // Handle client disconnection
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-  });
+  
 });
+
 
 // Start the server
 server.listen(PORT, () => {

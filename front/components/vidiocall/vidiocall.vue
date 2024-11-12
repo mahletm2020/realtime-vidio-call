@@ -61,16 +61,37 @@ const localVideo = ref(null);
 const remoteVideo = ref(null);
 let peerConnection = null;
 
+// Retrieve or set a unique Room ID from localStorage, client-side only
+const Roomid = ref(null);
+if (typeof window !== 'undefined') {
+  Roomid.value = localStorage.getItem('Roomid') || $socket.id;
+  localStorage.setItem('Roomid', Roomid.value);
+}
+
 // Join room on mount
 onMounted(() => {
-  $socket.emit('join', $socket.id);
+  if (typeof window !== 'undefined') {
+    Roomid.value = localStorage.getItem('Roomid') || $socket.id;
+    localStorage.setItem('Roomid', Roomid.value);
+  }
+  $socket.emit('join', Roomid.value);
+});
+
+// Listen for call notifications
+$socket.on('notification', (message) => {
+  alert(message);
+  console.log('Notification:', message);
 });
 
 // Function to start the call
 const callUser = () => {
+  if (!targetUserId.value) {
+    alert("Please enter a valid user ID.");
+    return;
+  }
   $socket.emit('call-user', {
     targetUserId: targetUserId.value,
-    callerId: $socket.id,
+    callerId: Roomid.value,
   });
   console.log(`Calling ${targetUserId.value}`);
 };
@@ -85,7 +106,7 @@ $socket.on('incoming-call', ({ callerId: id }) => {
 const acceptCall = async () => {
   incomingCall.value = false;
   inCall.value = true;
-  $socket.emit('accept-call', { callerId: callerId.value, receiverId: $socket.id });
+  $socket.emit('accept-call', { callerId: callerId.value, receiverId: Roomid.value });
   await startVideo();
 };
 
@@ -98,24 +119,35 @@ const rejectCall = () => {
 // Start video and set up WebRTC connection
 const startVideo = async () => {
   try {
+    // Get user media (audio and video)
     localStream.value = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localVideo.value.srcObject = localStream.value;
 
+    // Initialize the PeerConnection
     peerConnection = new RTCPeerConnection();
 
-    localStream.value.getTracks().forEach(track => peerConnection.addTrack(track, localStream.value));
+    // Add local stream tracks to PeerConnection
+    localStream.value.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStream.value);
+    });
 
+    // Handle incoming tracks from remote peer
     peerConnection.ontrack = (event) => {
-      remoteStream.value = event.streams[0];
-      remoteVideo.value.srcObject = remoteStream.value;
+      if (!remoteStream.value) {
+        remoteStream.value = new MediaStream();
+        remoteVideo.value.srcObject = remoteStream.value;
+      }
+      remoteStream.value.addTrack(event.track);
     };
 
+    // Handle ICE candidates
     peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
         $socket.emit('webrtc-signal', { targetUserId: targetUserId.value, signal: event.candidate });
       }
     };
 
+    // Create and send an offer
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     $socket.emit('webrtc-signal', { targetUserId: targetUserId.value, signal: offer });
@@ -124,19 +156,52 @@ const startVideo = async () => {
   }
 };
 
+
 // Handle WebRTC signaling data
-$socket.on('webrtc-signal', async (signal) => {
-  if (signal.type === 'offer') {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    $socket.emit('webrtc-signal', { targetUserId: targetUserId.value, signal: answer });
-  } else if (signal.type === 'answer') {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
-  } else if (signal.type === 'candidate') {
-    await peerConnection.addIceCandidate(new RTCIceCandidate(signal));
+$socket.on('webrtc-signal', async ({ signal, senderId }) => {
+  try {
+    if (!peerConnection) {
+      peerConnection = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
+      // Add local stream tracks to PeerConnection
+      localStream.value.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream.value);
+      });
+
+      // Handle incoming tracks
+      peerConnection.ontrack = (event) => {
+        if (!remoteStream.value) {
+          remoteStream.value = new MediaStream();
+          remoteVideo.value.srcObject = remoteStream.value;
+        }
+        remoteStream.value.addTrack(event.track);
+      };
+
+      // Handle ICE candidates
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          $socket.emit('webrtc-signal', { targetUserId: senderId, signal: event.candidate });
+        }
+      };
+    }
+
+    if (signal.type === 'offer') {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      $socket.emit('webrtc-signal', { targetUserId: senderId, signal: answer });
+    } else if (signal.type === 'answer') {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+    } else if (signal.candidate) {
+      await peerConnection.addIceCandidate(new RTCIceCandidate(signal));
+    }
+  } catch (err) {
+    console.error("Error handling WebRTC signal:", err);
   }
 });
+
 
 // End the call
 const endCall = () => {
@@ -162,9 +227,6 @@ const toggleMicrophone = () => {
   console.log(microphoneOn.value ? 'Microphone Enabled' : 'Microphone Disabled');
 };
 </script>
-
-
-
 
 
 <style scoped>
